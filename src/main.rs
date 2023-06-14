@@ -8,12 +8,25 @@ type Vec3 = (f32, f32, f32);
 //STRUCTs
 struct Scene {
     spheres: Vec<Sphere>,
+    lights: Vec<Light>
 }
 
 struct Sphere {
     color: Color,
     position: Vec3,
     radius: f32,
+}
+
+struct Light {
+    metadata: LightType,
+    intensity: Vec3,
+}
+
+//ENUMs
+enum LightType {
+    Directional(Vec3), //Light direction VECTOR
+    Point(Vec3),       //Light position VECTOR
+    Ambient,
 }
 
 //CONSTs
@@ -43,11 +56,10 @@ fn main() {
     //define scene
     let mut scene = Scene {
         spheres: Vec::new(),
+        lights: Vec::new(),
     };
 
     //define spheres in scene
-
-    //red sphere with coordinates (0, 1.5, 0) and radius 0.5
     scene.spheres.insert(0, Sphere {
         color: Color::RED,
         position: (0., 3.5, -1.),
@@ -58,6 +70,32 @@ fn main() {
         position: (3., 12.5, 0.),
         radius: 2.,
     });
+    scene.spheres.insert(2, Sphere {
+        color: Color::MAGENTA,
+        position: (-0.5, 5., 0.),
+        radius: 0.5,
+    });
+    
+    //define lighting elements
+    scene.lights.insert(0, Light {
+        metadata: LightType::Point((1.0, 1.0, 1.0)),
+        intensity: (0.5, 0.0, 0.0), //color channels added, red point light
+    });
+    scene.lights.insert(1, Light {
+        metadata: LightType::Point((-1.0, -1.0, 1.0)),
+        intensity: (0.0, 0.5, 0.0), //green
+    });
+    scene.lights.insert(2, Light {
+        metadata: LightType::Point((1.0, -1.0, 1.0)),
+        intensity: (0.0, 0.0, 0.5), //blue
+    });
+    scene.lights.insert(3, Light {
+        metadata: LightType::Ambient,
+        intensity: (0.3, 0.3, 0.3) //white ambient light
+    });
+
+    //light normalization
+
     
     //draw scene
 
@@ -118,9 +156,44 @@ fn TraceRay(scene: &Scene, camera_pos: Vec3, viewport_pos: Vec3, min_trace: i32,
     if closest_sphere.is_none() { BACKGROUND_COLOR } else {
         //println!("sphere was hit");
         //println!("{}", closest_val);
-        closest_sphere.unwrap().color 
+        let sphere = closest_sphere.unwrap();
+        let point = v_add(camera_pos ,v_scmult(viewport_pos, closest_val));
+        let surface_normal = v_sub(point, closest_sphere.unwrap().position);
+
+        let mut sphere_color = sphere.color.rgb();
+        let mut coerced_sphere_color = (sphere_color.0 as f32, sphere_color.1 as f32, sphere_color.2 as f32);
+        let point_intensity = ComputeLighting(scene, &point, &surface_normal);
+
+        coerced_sphere_color = (coerced_sphere_color.0 * point_intensity.0, coerced_sphere_color.1 * point_intensity.1, coerced_sphere_color.2 * point_intensity.2);
+        sphere_color = (coerced_sphere_color.0.round() as u8, coerced_sphere_color.1.round() as u8, coerced_sphere_color.2.round() as u8);
+        Color::from(sphere_color)
     }
 
+}
+
+fn ComputeLighting(scene: &Scene, point: &Vec3, surface_normal: &Vec3) -> Vec3 {
+    let mut point_light_intensity: Vec3 = (0., 0., 0.);
+    for light in &scene.lights {
+        match light.metadata {
+            LightType::Ambient => point_light_intensity = v_add(point_light_intensity, light.intensity),
+            LightType::Point(pos) => {
+                let l_vec = v_sub(pos, *point);
+                let n_l_dot = dot(*surface_normal, l_vec);
+                if n_l_dot > 0. { 
+                    let light_reflect_scalar = n_l_dot / (v_len(*surface_normal) * v_len(l_vec));
+                    point_light_intensity = v_add(point_light_intensity, v_scmult(light.intensity, light_reflect_scalar));
+                }
+            },
+            LightType::Directional(l_vec) => {
+                let n_l_dot = dot(*surface_normal, l_vec);
+                if n_l_dot > 0. { 
+                    let light_reflect_scalar = n_l_dot / (v_len(*surface_normal) * v_len(l_vec));
+                    point_light_intensity = v_add(point_light_intensity, v_scmult(light.intensity, light_reflect_scalar));
+                }
+            },
+        }
+    }
+    point_light_intensity
 }
 
 //solve quadratic for potential hits as line is traced out
@@ -161,4 +234,10 @@ fn v_inv(u: Vec3) -> Vec3 { (-u.0, -u.1, -u.2) }
 fn v_sub(u: Vec3, v: Vec3) -> Vec3 {
     let nv = v_inv(v);
     v_add(u, nv)
+}
+fn v_scmult(u: Vec3, b: f32) -> Vec3 { (u.0 * b, u.1 * b, u.2 * b) }
+fn v_len(u: Vec3) -> f32 { (u.0.powi(2) + u.1.powi(2) + u.2.powi(2)).sqrt() }
+fn v_norm(u: Vec3) -> Vec3 {
+    let len = v_len(u);
+    (u.0 / len, u.1 / len, u.2 / len)
 }
