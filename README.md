@@ -1,0 +1,2 @@
+This repo will contain my progress on a 3D renderer. Main branch will eventually contain completed renderer, but I will push branches of limited versions of the renderer as I develop them. I am following this book online: https://www.gabrielgambetta.com/computer-graphics-from-scratch/
+All project settings are currently targeted towards an M1 Mac with SDL2 installed (brew or downloading from the sdl2 website). I will probably also add configurations for a Windows target eventually. 
