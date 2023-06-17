@@ -1,7 +1,13 @@
-use std::cell::RefCell;
+pub mod timing;
+
+use std::f32::consts::PI;
+
+use ndarray::{arr2, Array2, OwnedRepr, Ix3 };
 
 //CHAPTER 3 - updated to incorporate lighting types
 use sdl2::{pixels::Color, rect::Point, event::Event, libc::{close, COPYFILE_RECURSE_DIR}};
+
+use crate::timing::TimerTrait;
 
 //TYPEDEFs
 type Vec3 = (f32, f32, f32);
@@ -25,6 +31,11 @@ struct Light {
     intensity: Vec3,
 }
 
+struct Camera {
+    position: Vec3,
+    orientation: Array2<f32>
+}
+
 //ENUMs
 #[derive(PartialEq)]
 enum LightType {
@@ -46,7 +57,7 @@ const EPSILON: f32 = 0.001;
 const TRACE_RECURSION_DEPTH: u8 = 3;
 
 //this is renderer V1, we use hard-coded camera position
-const CAMERA_POSITION: Vec3 = (0., 0., 0.); //origin of world
+const DEFAULT_CAMERA_POSITION: Vec3 = (0., 0., 0.); //origin of world
 const BACKGROUND_COLOR: Color = Color::RGB(0, 0, 0);
 
 pub fn main() -> Result<(), String> {
@@ -69,6 +80,11 @@ pub fn main() -> Result<(), String> {
     let mut scene = Scene {
         spheres: Vec::new(),
         lights: Vec::new(),
+    };
+
+    let mut camera = Camera {
+        position: (0., 0., 0.),
+        orientation: z_rot_mat(180. * (PI / 180.)), //
     };
 
     //define spheres in scene
@@ -147,16 +163,36 @@ pub fn main() -> Result<(), String> {
     for i in 0..scene.lights.len() {
         scene.lights[i].intensity = v_rowmult(&scene.lights[i].intensity, &channel_sums);
     }
+
+    //90 degrees about z+ axis, looking at 0deg wrt. z axis
+    //let mut camera_orientation = arr2(&[[1., 0., 0.,], [0., 1., 0.,], [0., 0., 1.,]]);
+
+    let mut viewport_calc_timing = timing::new();
+    let mut trace_timing = timing::new();
     
     //draw scene
     for x in (-(CANVAS_WIDTH as i32)/2)..(CANVAS_WIDTH as i32)/2 {
         for y in -(CANVAS_HEIGHT as i32)/2..(CANVAS_HEIGHT as i32)/2 {
             //convert to viewport
-            let viewport_pos: Vec3 = coordinates_canvas_to_viewport(x, y);
+            //let viewport_pos: Vec3 = coordinates_canvas_to_viewport(x, y);
 
-            //trace to get color of point
-            let color = trace_ray(&scene, &CAMERA_POSITION, &viewport_pos, 1., INFINITY as f32, TRACE_RECURSION_DEPTH);
+            //convert to ndarray type
+            let mut viewport_pos = coordinates_canvas_to_viewport(x, y);
+
+            let _viewport_pos = camera.orientation.dot(&vec3_to_arr2(&viewport_pos).t()); //v slow
+            // 7 ms per call
+
+            //viewport_calc_timing.start();
+            // 2 ms per call -> this is almost the same as the trace ray call!!!!
+            arr2_to_vec3(&_viewport_pos.t().to_owned()); //relatively slow
+            //viewport_calc_timing.elapse();
+
             
+            //println!("Here");
+            //trace to get color of point
+            trace_timing.start();
+            let color = trace_ray(&scene, &camera.position, &viewport_pos, 1., INFINITY as f32, TRACE_RECURSION_DEPTH);
+            trace_timing.elapse();
             //draw on canvas
             let canvas_pos = convert_canvas_coordinates(x, y);
 
@@ -167,6 +203,12 @@ pub fn main() -> Result<(), String> {
             }
         }   
     }
+
+    println!("finished draw");
+    let (view_cnt, view_avg) = viewport_calc_timing.average();
+    let (trace_cnt, trace_avg) = trace_timing.average();
+    println!("viewport avg calc: {}s over {} entries", view_avg, view_cnt);
+    println!("trace calc: {}s over {} entries", trace_avg, trace_cnt);
 
     //show completed scene
     canvas.present();
@@ -446,4 +488,19 @@ fn v_len(u: Vec3) -> f32 { (u.0.powi(2) + u.1.powi(2) + u.2.powi(2)).sqrt() }
 fn v_norm(u: Vec3) -> Vec3 {
     let len = v_len(u);
     (u.0 / len, u.1 / len, u.2 / len)
+}
+#[inline]
+fn vec3_to_arr2(u: &Vec3) -> Array2<f32> {
+    arr2(&[[u.0, u.1, u.2]])
+}
+
+#[inline]
+fn arr2_to_vec3(u: &Array2<f32>) -> Vec3 {
+    (u[[0,0]], u[[0,1]], u[[0,2]])
+}
+
+//rot matrix helpers
+//b in radians
+fn z_rot_mat(b: f32) -> Array2<f32> {
+    arr2(&[[b.cos(), -b.sin(), 0.], [b.sin(), -b.cos(), 0.], [0., 0., 1.]])
 }
