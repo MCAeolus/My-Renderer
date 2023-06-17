@@ -8,13 +8,13 @@ build = "build.rs"
 
 [dependencies]
 ogl33 = "0.3.0"
-sdl2 = "0.35"
+# sdl2 = "0.35"
 
-[env]
-QT_X11_NO_MITSHM=1
-MIT-SHM="Disable"
+# [env]
+# QT_X11_NO_MITSHM=1
+# MIT-SHM="Disable"
 
-[target.'cfg(target_arch = "aarch64-apple-darwin")'.dependencies.sdl2]
+[dependencies.sdl2]
 version = "*"
 default-features = false
 features = ["use_mac_framework"]

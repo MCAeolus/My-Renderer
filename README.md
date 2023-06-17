@@ -1,3 +1,3 @@
-based off of chapter 3 - adds diffuse and specular reflections
+based off of chapter 4 - adds shadows and a reflective property for surfaces
 
-![example image](chapter-3-example.jpg)
+![example image](chapter-4-example.jpg)

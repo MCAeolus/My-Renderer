@@ -1,5 +1,7 @@
+use std::cell::RefCell;
+
 //CHAPTER 3 - updated to incorporate lighting types
-use sdl2::{pixels::Color, rect::Point, event::Event};
+use sdl2::{pixels::Color, rect::Point, event::Event, libc::{close, COPYFILE_RECURSE_DIR}};
 
 //TYPEDEFs
 type Vec3 = (f32, f32, f32);
@@ -15,6 +17,7 @@ struct Sphere {
     position: Vec3,
     radius: f32,
     specular: u32, // TODO: this should be a general object/surface value
+    reflective: f32, // how reflective the surface is, should be in range [0,1]
 }
 
 struct Light {
@@ -38,6 +41,9 @@ const VIEWPORT_HEIGHT: i32 = 1;
 
 const CANVAS_WIDTH: u32 = 800;
 const CANVAS_HEIGHT: u32 = 800;
+
+const EPSILON: f32 = 0.001;
+const TRACE_RECURSION_DEPTH: u8 = 3;
 
 //this is renderer V1, we use hard-coded camera position
 const CAMERA_POSITION: Vec3 = (0., 0., 0.); //origin of world
@@ -67,23 +73,44 @@ pub fn main() -> Result<(), String> {
 
     //define spheres in scene
     scene.spheres.insert(0, Sphere {
-        color: Color::RED,
-        position: (0., 3.5, -1.),
+        color: Color::WHITE,
+        position: (-1., 3.5, 0.),
         radius: 1.,
-        specular: 10,
+        specular: 100,
+        reflective: 0.7,
     });
     scene.spheres.insert(1, Sphere {
         color: Color::BLUE,
-        position: (3., 12.5, 0.),
-        radius: 2.,
+        position: (1., 3.5, 0.),
+        radius: 1.,
         specular: 500,
+        reflective: 0.5,
     });
     scene.spheres.insert(2, Sphere {
-        color: Color::MAGENTA,
-        position: (-0.5, 5., 0.),
+        color: Color::GREEN,
+        position: (0., 2.5, 1.),
         radius: 0.5,
         specular: 100,
+        reflective: 0.5,
     });
+
+    //making spheres for each light source
+    //todo: debug option that shows spheres for each light source
+    scene.spheres.insert(3, Sphere {
+        color: Color::WHITE,
+        position: ((0.0, 0.0, 0.8)),
+        radius: 0.1,
+        specular: 10000,
+        reflective: 0.,
+    });
+    scene.spheres.insert(4, Sphere {
+        color: Color::WHITE,
+        position: ((-7.0, 7.0, 0.0)),
+        radius: 0.1,
+        specular: 10000,
+        reflective: 0.,
+    });
+
     
     //define lighting elements
     //note: all light intensities are normalized so that the sum of each channel is 1
@@ -97,7 +124,11 @@ pub fn main() -> Result<(), String> {
     });
     scene.lights.insert(2, Light {
         metadata: LightType::Ambient,
-        intensity: (0.1, 0.1, 0.1) //white ambient light
+        intensity: (0.4, 0.4, 0.4), //white ambient light
+    });
+    scene.lights.insert(3, Light {
+        metadata: LightType::Directional((0.0, 1.0, 1.0)),
+        intensity: (0.5, 0.2, 0.2),
     });
 
     //light intensity normalization
@@ -117,7 +148,7 @@ pub fn main() -> Result<(), String> {
             let viewport_pos: Vec3 = coordinates_canvas_to_viewport(x, y);
 
             //trace to get color of point
-            let color = trace_ray(&scene, &CAMERA_POSITION, &viewport_pos, 1, INFINITY);
+            let color = trace_ray(&scene, &CAMERA_POSITION, &viewport_pos, 1., INFINITY as f32, TRACE_RECURSION_DEPTH);
             
             //draw on canvas
             let canvas_pos = convert_canvas_coordinates(x, y);
@@ -131,10 +162,8 @@ pub fn main() -> Result<(), String> {
     }
 
     //show completed scene
-    println!("here1");
     canvas.present();
-    println!("here2");
-    
+
     //check for window inputs
     let mut event_pump = sdl.event_pump()?;
 
@@ -151,24 +180,8 @@ pub fn main() -> Result<(), String> {
     Ok(())
 }
 
-fn trace_ray(scene: &Scene, camera_pos: &Vec3, viewport_pos: &Vec3, min_trace: i32, max_trace: i32) -> Color {
-    let mut closest_val = INFINITY as f32;
-    let mut closest_sphere: Option<&Sphere> = None;
-
-    for i in 0..scene.spheres.len(){
-        let cur_sphere = &scene.spheres[i];
-        let (t1, t2) = intersect_ray_sphere(camera_pos, viewport_pos, cur_sphere);
-
-        if in_range(t1, min_trace as f32, max_trace as f32) && t1 < closest_val {
-            closest_val = t1;
-            closest_sphere = Some(&cur_sphere);
-        }
-
-        if in_range(t2, min_trace as f32, max_trace as f32) && t2 < closest_val {
-            closest_val = t2;
-            closest_sphere = Some(&cur_sphere);
-        }
-    }
+fn trace_ray(scene: &Scene, camera_pos: &Vec3, viewport_pos: &Vec3, min_trace: f32, max_trace: f32, recursion_depth: u8) -> Color {
+    let (closest_sphere, closest_val) = closest_intersection(scene, camera_pos, viewport_pos, min_trace, max_trace);
     
     if closest_sphere.is_none() { BACKGROUND_COLOR } else {
         //println!("sphere was hit");
@@ -179,16 +192,30 @@ fn trace_ray(scene: &Scene, camera_pos: &Vec3, viewport_pos: &Vec3, min_trace: i
         let viewpoint_vec = v_scmult(viewport_pos, -1.);
 
         // setup color vectors for the position
-        let mut sphere_color = sphere.color.rgb();
-        let mut coerced_sphere_color = (sphere_color.0 as f32, sphere_color.1 as f32, sphere_color.2 as f32);
+        let mut coerced_sphere_color = color_to_float_channels(&sphere.color);
 
         //Compute Lighting at point
         let point_intensity = compute_lighting(scene, &point, &surface_normal, &viewpoint_vec, &sphere.specular);
+        
+        //row mult all channels by the point intensity from the incoming light
+        coerced_sphere_color = v_rowmult(&coerced_sphere_color, &point_intensity);
 
-        coerced_sphere_color = (coerced_sphere_color.0 * point_intensity.0, coerced_sphere_color.1 * point_intensity.1, coerced_sphere_color.2 * point_intensity.2);
-        sphere_color = (coerced_sphere_color.0.round() as u8, coerced_sphere_color.1.round() as u8, coerced_sphere_color.2.round() as u8);
-        Color::from(sphere_color)
-    }
+        if recursion_depth <= 0 || sphere.reflective <= 0. {
+            return float_channels_to_color(&coerced_sphere_color);
+        }
+
+        //calculate reflected ray so we can continue tracing for our reflection
+        let reflected_ray = reflect_ray(&v_scmult(viewport_pos, -1.), &surface_normal);
+        let reflected_color = trace_ray(scene, &point, &reflected_ray, EPSILON, max_trace, recursion_depth - 1);
+        
+        //perform the calculation local_color * (1 - r) + reflected_color * r, where r = object reflective constant
+        let mut reflected_channels = color_to_float_channels(&reflected_color);
+        reflected_channels = v_scmult(&reflected_channels, sphere.reflective); //reflected_color * r
+        reflected_channels = v_add(&reflected_channels, &v_scmult(&coerced_sphere_color, 1. - sphere.reflective)); //local * (1-r)
+        
+        //convert back to color, return
+        float_channels_to_color(&reflected_channels)
+    }  
 
 }
 
@@ -200,12 +227,20 @@ fn compute_lighting(scene: &Scene, point: &Vec3, surface_normal: &Vec3, viewpoin
         if light.metadata == LightType::Ambient {
             point_light_intensity = v_add(&point_light_intensity, &light.intensity);
         } else {
-            //diffuse
-            let l_vec: Vec3 = match light.metadata {
-                LightType::Point(pos) => v_sub(&pos, point),
-                LightType::Directional(L) => L,
-                LightType::Ambient => (0., 0., 0.), //covered in former if statement
+            //setup args depending on light type
+            let (l_vec, t_max) = match light.metadata {
+                LightType::Point(pos) => (v_sub(&pos, point), 1.),
+                LightType::Directional(L) => (L, INFINITY as f32),
+                LightType::Ambient => panic!("invalid branch of match in compute_lighting"), //covered in former if statement
             };
+
+            //shadow
+            let (shadow_casting_sphere, _) = closest_intersection(scene, point, &l_vec, EPSILON, t_max);
+            if shadow_casting_sphere.is_some() {
+                continue;
+            }
+
+            //diffuse
             let n_l_dot = dot(surface_normal, &l_vec);
             if n_l_dot > 0. { 
                 let light_reflect_scalar = n_l_dot / (v_len(*surface_normal) * v_len(l_vec));
@@ -214,9 +249,7 @@ fn compute_lighting(scene: &Scene, point: &Vec3, surface_normal: &Vec3, viewpoin
 
             //specular
             if *specular > 0 {
-                //println!("spec");
-                let mut reflection_vec = v_scmult(surface_normal, 2. * dot(surface_normal, &l_vec)); // R = 2*N*dot(N, L)
-                reflection_vec = v_sub(&reflection_vec, &l_vec); //... - L
+                let reflection_vec = reflect_ray(&l_vec, surface_normal);
                 let r_dot_v = dot(&reflection_vec, viewpoint);
 
                 if r_dot_v > 0. {
@@ -228,6 +261,102 @@ fn compute_lighting(scene: &Scene, point: &Vec3, surface_normal: &Vec3, viewpoin
         }
     }
     point_light_intensity
+}
+
+//performs 2 * N * dot(N, R) - R
+fn reflect_ray(ray: &Vec3, surface_normal: &Vec3) -> Vec3 {
+    let mut inner_product = v_scmult(surface_normal, dot(surface_normal, ray)); //N * dot(N, R)
+    inner_product = v_scmult(&inner_product, 2.); //2 * [N * dot(N, R)] (brackets calculated above))
+    v_sub(&inner_product, ray) //.. - R
+}
+
+//used in trace_ray and compute_lighting
+fn closest_intersection<'a>(scene: &'a Scene, camera_pos: &'a Vec3, viewport_pos: &'a Vec3, t_min: f32, t_max: f32) -> (Option<&'a Sphere>, f32) {
+    let mut closest_sphere: Option<&Sphere> = None;
+    let mut closest_t = INFINITY as f32;
+
+    for i in 0..scene.spheres.len(){
+        let cur_sphere = &scene.spheres[i];
+        let (t1, t2) = intersect_ray_sphere(camera_pos, viewport_pos, cur_sphere);
+
+        if in_range(t1, t_min as f32, t_max as f32) && t1 < closest_t {
+            closest_t = t1;
+            closest_sphere = Some(&cur_sphere);
+        }
+
+        if in_range(t2, t_min as f32, t_max as f32) && t2 < closest_t {
+            closest_t = t2;
+            closest_sphere = Some(&cur_sphere);
+        }
+    }
+
+    (closest_sphere, closest_t)
+}
+
+fn scene1(scene: &mut Scene) {
+        //define spheres in scene
+        scene.spheres.insert(0, Sphere {
+            color: Color::RED,
+            position: (0., 3.5, -1.),
+            radius: 1.,
+            specular: 10,
+            reflective: 0.9,
+        });
+        scene.spheres.insert(1, Sphere {
+            color: Color::BLUE,
+            position: (3., 12.5, 0.),
+            radius: 2.,
+            specular: 500,
+            reflective: 0.5,
+        });
+        scene.spheres.insert(2, Sphere {
+            color: Color::MAGENTA,
+            position: (-0.5, 5., 0.),
+            radius: 0.5,
+            specular: 100,
+            reflective: 0.05,
+        });
+        //should? cast a shadow on the red sphere
+        scene.spheres.insert(0, Sphere {
+            color: Color::GREEN,
+            position: (0.2, 2.0, 0.5),
+            radius: 0.2,
+            specular: 10,
+            reflective: 0.,
+        });
+    
+        //making spheres for each light source
+        //todo: debug option that shows spheres for each light source
+        scene.spheres.insert(3, Sphere {
+            color: Color::WHITE,
+            position: ((0.0, 0.0, 0.8)),
+            radius: 0.1,
+            specular: 10000,
+            reflective: 0.,
+        });
+        scene.spheres.insert(4, Sphere {
+            color: Color::WHITE,
+            position: ((-7.0, 7.0, 0.0)),
+            radius: 0.1,
+            specular: 10000,
+            reflective: 0.,
+        });
+    
+        
+        //define lighting elements
+        //note: all light intensities are normalized so that the sum of each channel is 1
+        scene.lights.insert(0, Light {
+            metadata: LightType::Point((0.0, 0.0, 8.0)),
+            intensity: (0.9, 0.9, 0.9), //color channels added, red point light
+        });
+        scene.lights.insert(1, Light {
+            metadata: LightType::Point((-7.0, 7.0, 0.0)),
+            intensity: (0.3, 0.3, 0.3),
+        });
+        scene.lights.insert(2, Light {
+            metadata: LightType::Ambient,
+            intensity: (0.1, 0.1, 0.1) //white ambient light
+        });
 }
 
 //solve quadratic for potential hits as line is traced out
@@ -258,30 +387,55 @@ fn convert_canvas_coordinates(x: i32, y: i32) -> Point {
     Point::new((CANVAS_WIDTH as i32/2) + x, (CANVAS_HEIGHT as i32/2) - y)
 }
 
+// color helpers
+#[inline]
+fn color_to_float_channels(color: &Color) -> Vec3 {
+    (color.r as f32, color.g as f32, color.b as f32)
+}
+
+#[inline]
+fn float_channels_to_8int(channels: &Vec3) -> (u8, u8, u8) {
+    (channels.0.round() as u8, channels.1.round() as u8, channels.2.round() as u8)
+}
+
+#[inline]
+fn float_channels_to_color(channels: &Vec3) -> Color {
+    Color::from(float_channels_to_8int(channels))
+}
+
 // f32 helpers
 // returns true if v is within [min, max]
+#[inline]
 fn in_range(v: f32, min: f32, max: f32) -> bool { v >= min && v <= max }
 
 // VEC3 math helpers
 // dot product, (u_0 * v_0 + u_1 * v_1 + u_2 * v_2)
+#[inline]
 fn dot(u: &Vec3, v: &Vec3) -> f32 { u.0 * v.0 + u.1 * v.1 + u.2 * v.2 }
 // add v and u (v + u, (u_0 + v_0, u_1 + v_1, u_2 + v_2))
+#[inline]
 fn v_add(u: &Vec3, v: &Vec3) -> Vec3 { (u.0 + v.0, u.1 + v.1, u.2 + v.2) }
 // get vector inverse (-u_0, -u_1, -u_2)
+#[inline]
 fn v_inv(u: &Vec3) -> Vec3 { (-u.0, -u.1, -u.2) }
 // subtract v from u (u - v, e.x. (u_0 - v_0, u_1 - v_1, u_2 - v_2))
 fn v_sub(u: &Vec3, v: &Vec3) -> Vec3 {
     let nv = v_inv(v);
     v_add(u, &nv)
 }
+#[inline]
 fn v_scmult(u: &Vec3, b: f32) -> Vec3 { (u.0 * b, u.1 * b, u.2 * b) }
 // multiply row-wise, i.e. (v_0 * u_0, v_1 * u_1, v_2 * u_2)
+#[inline]
 fn v_rowmult(u: &Vec3, v: &Vec3) -> Vec3 { (u.0 * v.0, u.1 * v.1, u.2 * v.2) }
 // invert row-wise, (1/v_0, 1/v_1, 1/v_2)
+#[inline]
 fn v_rowinvert(u: &Vec3) -> Vec3 { (1./u.0, 1./u.1, 1./u.2) }
 // get vector length -> this could be amortized by calculating upfront (?) or lazy calculating
+#[inline]
 fn v_len(u: Vec3) -> f32 { (u.0.powi(2) + u.1.powi(2) + u.2.powi(2)).sqrt() }
 // return a unit vector
+#[inline]
 fn v_norm(u: Vec3) -> Vec3 {
     let len = v_len(u);
     (u.0 / len, u.1 / len, u.2 / len)
