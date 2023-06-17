@@ -14,7 +14,7 @@ struct Sphere {
     color: Color,
     position: Vec3,
     radius: f32,
-    specular: u32, // this should be a general object/surface value
+    specular: u32, // TODO: this should be a general object/surface value
 }
 
 struct Light {
@@ -43,10 +43,15 @@ const CANVAS_HEIGHT: u32 = 800;
 const CAMERA_POSITION: Vec3 = (0., 0., 0.); //origin of world
 const BACKGROUND_COLOR: Color = Color::RGB(0, 0, 0);
 
-fn main() {
-    let sdl = sdl2::init().unwrap();
-    let window = sdl.video().unwrap().window("Renderer", CANVAS_WIDTH, CANVAS_HEIGHT).build().unwrap();
-    let mut canvas = window.into_canvas().present_vsync().build().unwrap();
+pub fn main() -> Result<(), String> {
+    let sdl = sdl2::init()?;
+    let window = sdl.video()?.window("Renderer", CANVAS_WIDTH, CANVAS_HEIGHT)
+        .position_centered()
+        .opengl()
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
 
     canvas.set_draw_color(BACKGROUND_COLOR);
     canvas.clear(); //set bg to be black
@@ -109,13 +114,13 @@ fn main() {
     for x in (-(CANVAS_WIDTH as i32)/2)..(CANVAS_WIDTH as i32)/2 {
         for y in -(CANVAS_HEIGHT as i32)/2..(CANVAS_HEIGHT as i32)/2 {
             //convert to viewport
-            let viewport_pos: Vec3 = CoordinatesCanvasToViewport(x, y);
+            let viewport_pos: Vec3 = coordinates_canvas_to_viewport(x, y);
 
             //trace to get color of point
-            let color = TraceRay(&scene, &CAMERA_POSITION, &viewport_pos, 1, INFINITY);
+            let color = trace_ray(&scene, &CAMERA_POSITION, &viewport_pos, 1, INFINITY);
             
             //draw on canvas
-            let canvas_pos = ConvertCanvasCoordinates(x, y);
+            let canvas_pos = convert_canvas_coordinates(x, y);
 
             canvas.set_draw_color(color);
             match canvas.draw_point(canvas_pos) {
@@ -126,10 +131,12 @@ fn main() {
     }
 
     //show completed scene
+    println!("here1");
     canvas.present();
+    println!("here2");
     
     //check for window inputs
-    let mut event_pump = sdl.event_pump().unwrap();
+    let mut event_pump = sdl.event_pump()?;
 
     //holding window loop (so it doesn't instantly close on draw),
     //checking for quit event to stop the loop
@@ -141,15 +148,16 @@ fn main() {
             }
         }
     }
+    Ok(())
 }
 
-fn TraceRay(scene: &Scene, camera_pos: &Vec3, viewport_pos: &Vec3, min_trace: i32, max_trace: i32) -> Color {
+fn trace_ray(scene: &Scene, camera_pos: &Vec3, viewport_pos: &Vec3, min_trace: i32, max_trace: i32) -> Color {
     let mut closest_val = INFINITY as f32;
     let mut closest_sphere: Option<&Sphere> = None;
 
     for i in 0..scene.spheres.len(){
         let cur_sphere = &scene.spheres[i];
-        let (t1, t2) = IntersectRaySphere(camera_pos, viewport_pos, cur_sphere);
+        let (t1, t2) = intersect_ray_sphere(camera_pos, viewport_pos, cur_sphere);
 
         if in_range(t1, min_trace as f32, max_trace as f32) && t1 < closest_val {
             closest_val = t1;
@@ -175,7 +183,7 @@ fn TraceRay(scene: &Scene, camera_pos: &Vec3, viewport_pos: &Vec3, min_trace: i3
         let mut coerced_sphere_color = (sphere_color.0 as f32, sphere_color.1 as f32, sphere_color.2 as f32);
 
         //Compute Lighting at point
-        let point_intensity = ComputeLighting(scene, &point, &surface_normal, &viewpoint_vec, &sphere.specular);
+        let point_intensity = compute_lighting(scene, &point, &surface_normal, &viewpoint_vec, &sphere.specular);
 
         coerced_sphere_color = (coerced_sphere_color.0 * point_intensity.0, coerced_sphere_color.1 * point_intensity.1, coerced_sphere_color.2 * point_intensity.2);
         sphere_color = (coerced_sphere_color.0.round() as u8, coerced_sphere_color.1.round() as u8, coerced_sphere_color.2.round() as u8);
@@ -184,7 +192,7 @@ fn TraceRay(scene: &Scene, camera_pos: &Vec3, viewport_pos: &Vec3, min_trace: i3
 
 }
 
-fn ComputeLighting(scene: &Scene, point: &Vec3, surface_normal: &Vec3, viewpoint: &Vec3, specular: &u32) -> Vec3 {
+fn compute_lighting(scene: &Scene, point: &Vec3, surface_normal: &Vec3, viewpoint: &Vec3, specular: &u32) -> Vec3 {
     // current 3-channel intensity at point P
     let mut point_light_intensity: Vec3 = (0., 0., 0.);
     // iterate through all lights, we want to determine how they affect point P w.r.t. the camera
@@ -223,7 +231,7 @@ fn ComputeLighting(scene: &Scene, point: &Vec3, surface_normal: &Vec3, viewpoint
 }
 
 //solve quadratic for potential hits as line is traced out
-fn IntersectRaySphere(camera_pos: &Vec3, viewport_pos: &Vec3, sphere: &Sphere) -> (f32, f32) {
+fn intersect_ray_sphere(camera_pos: &Vec3, viewport_pos: &Vec3, sphere: &Sphere) -> (f32, f32) {
     //solving ax^2 + bx + c = 0
 
     let camera_to_sphere_vec: Vec3 = v_sub(camera_pos, &sphere.position);
@@ -240,13 +248,13 @@ fn IntersectRaySphere(camera_pos: &Vec3, viewport_pos: &Vec3, sphere: &Sphere) -
     ( (-b + discriminant) / quot, (-b - discriminant) / quot )
 }
 
-fn CoordinatesCanvasToViewport(canvas_x: i32, canvas_y: i32) -> Vec3 { 
+fn coordinates_canvas_to_viewport(canvas_x: i32, canvas_y: i32) -> Vec3 { 
     //hard-coded depth from canvas - unit 1 (in y dir)
     (canvas_x as f32 * (VIEWPORT_WIDTH as f32/CANVAS_WIDTH as f32), 1., canvas_y as f32 * (VIEWPORT_HEIGHT as f32/CANVAS_HEIGHT as f32))
 }
 
 // from 0,0 centering to array ordering
-fn ConvertCanvasCoordinates(x: i32, y: i32) -> Point { 
+fn convert_canvas_coordinates(x: i32, y: i32) -> Point { 
     Point::new((CANVAS_WIDTH as i32/2) + x, (CANVAS_HEIGHT as i32/2) - y)
 }
 
