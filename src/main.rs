@@ -77,14 +77,14 @@ pub fn main() -> Result<(), String> {
         position: (-1., 3.5, 0.),
         radius: 1.,
         specular: 100,
-        reflective: 0.7,
+        reflective: 0.2,
     });
     scene.spheres.insert(1, Sphere {
         color: Color::BLUE,
-        position: (1., 3.5, 0.),
+        position: (1., 3.5, -0.5),
         radius: 1.,
         specular: 500,
-        reflective: 0.5,
+        reflective: 0.1,
     });
     scene.spheres.insert(2, Sphere {
         color: Color::GREEN,
@@ -93,17 +93,24 @@ pub fn main() -> Result<(), String> {
         specular: 100,
         reflective: 0.5,
     });
+    scene.spheres.insert(3, Sphere { //the "floor"
+        color: Color::GRAY,
+        position: (0., 0., -5001.),
+        radius: 5000.,
+        specular: 1000,
+        reflective: 0.5,
+    });
 
     //making spheres for each light source
     //todo: debug option that shows spheres for each light source
-    scene.spheres.insert(3, Sphere {
+    scene.spheres.insert(4, Sphere {
         color: Color::WHITE,
         position: ((0.0, 0.0, 0.8)),
         radius: 0.1,
         specular: 10000,
         reflective: 0.,
     });
-    scene.spheres.insert(4, Sphere {
+    scene.spheres.insert(5, Sphere {
         color: Color::WHITE,
         position: ((-7.0, 7.0, 0.0)),
         radius: 0.1,
@@ -119,17 +126,17 @@ pub fn main() -> Result<(), String> {
         intensity: (0.9, 0.9, 0.9), //color channels added, red point light
     });
     scene.lights.insert(1, Light {
-        metadata: LightType::Point((-7.0, 7.0, 0.0)),
-        intensity: (0.3, 0.3, 0.3),
+        metadata: LightType::Point((-3.0, 3.0, 0.0)),
+        intensity: v_scmult(&color_to_float_channels(&Color::BLUE), 1./255.),
     });
     scene.lights.insert(2, Light {
         metadata: LightType::Ambient,
         intensity: (0.4, 0.4, 0.4), //white ambient light
     });
-    scene.lights.insert(3, Light {
-        metadata: LightType::Directional((0.0, 1.0, 1.0)),
-        intensity: (0.5, 0.2, 0.2),
-    });
+    //scene.lights.insert(3, Light {
+    //    metadata: LightType::Directional((0.0, 1.0, 1.0)),
+    //    intensity: (0.2, 0.2, 0.2),
+    //});
 
     //light intensity normalization
     let mut channel_sums = (0., 0., 0.);
