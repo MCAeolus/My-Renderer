@@ -8,7 +8,7 @@ build = "build.rs"
 
 [dependencies]
 ogl33 = "0.3.0"
-ndarray = "0.15.6"
+nalgebra = "0.32.2"
 # sdl2 = "0.35"
 
 # [env]
