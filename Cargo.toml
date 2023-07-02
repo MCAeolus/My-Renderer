@@ -10,6 +10,9 @@ build = "build.rs"
 ogl33 = "0.3.0"
 nalgebra = "0.32.2"
 # sdl2 = "0.35"
+num-traits = "0.2.15"
+num-iter = "0.1.43"
+lazy_static = "1.4.0"
 
 # [env]
 # QT_X11_NO_MITSHM=1
