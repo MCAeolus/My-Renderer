@@ -1,3 +1,3 @@
-based off of chapter 4 - adds shadows and a reflective property for surfaces
+The repo chapters are kind of out of alignment with book now. This has included features in rasterizer section of book up to chapter 10.
 
-![example image](chapter-4-example.jpg)
+![example image](chapter-6-example.gif)
